@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 
 import config as cfg
 from structures import ImageProcessingFlags, ImageProcessingSettings
+from ui.widgets import RangeSlider, SegmentedControl
 
 
 class MagnifyOptions(QWidget):
@@ -56,11 +57,11 @@ class MagnifyOptions(QWidget):
         # Processing resolution. Shrinking the frame before the pyramid is the
         # cheapest way to buy frame rate: the cost falls quadratically.
         root.addWidget(QLabel("Processing resolution:"))
-        self._scale = QComboBox()
-        for d in cfg.PROCESSING_SCALES:
-            self._scale.addItem("Full" if d == 1 else f"1/{d}", d)
+        self._scale = SegmentedControl(
+            ["Full" if d == 1 else f"1/{d}" for d in cfg.PROCESSING_SCALES]
+        )
         self._scale.currentIndexChanged.connect(
-            lambda _: self.downscale_changed.emit(self._scale.currentData())
+            lambda i: self.downscale_changed.emit(cfg.PROCESSING_SCALES[i])
         )
         root.addWidget(self._scale)
 
@@ -91,13 +92,18 @@ class MagnifyOptions(QWidget):
             self._chrom,
             self._levels,
         ):
-            if isinstance(w, QSpinBox):
-                w.valueChanged.connect(self._emit_settings)
-            else:
-                w.valueChanged.connect(self._emit_settings)
+            w.valueChanged.connect(self._emit_settings)
+        for w in (self._lo, self._hi):
+            w.valueChanged.connect(lambda _=None: self._sync_band_slider())
 
         form.addRow("Amplification", self._amp)
         form.addRow("Wavelength / cutoff (mode-dependent)", self._wave)
+        # A two-handle slider over the same pair of values. The spin boxes stay
+        # for precise entry, but on their own they let the user set low > high,
+        # which the filters cannot honour; the slider keeps the band ordered.
+        self._band = RangeSlider()
+        self._band.valuesChanged.connect(self._on_band_slider)
+        form.addRow("Band (Hz)", self._band)
         form.addRow("Low cutoff (Hz)", self._lo)
         form.addRow("High cutoff (Hz)", self._hi)
         form.addRow("Chroma attenuation %", self._chrom)
@@ -111,10 +117,14 @@ class MagnifyOptions(QWidget):
         self._combo.setCurrentIndex(cfg.DEFAULT_MAGNIFY_TYPE)
         self._apply_mode_ui(0)
         self._reset_defaults()
+        # The slider is built before the defaults are applied, so mirror them
+        # once at the end or it would show an empty band.
+        self._sync_band_slider()
 
     def _on_mode_changed(self, idx: int) -> None:
         self._apply_mode_ui(idx)
         self._reset_defaults()
+        self._sync_band_slider()
 
     def set_capture_fps(self, fps: float) -> None:
         """
@@ -134,6 +144,23 @@ class MagnifyOptions(QWidget):
             w.setRange(0.05, nyquist)
         self._lo.setSuffix(" Hz")
         self._hi.setSuffix(" Hz")
+        self._band.set_range(0.05, nyquist)
+        self._band.set_step(0.01)
+        self._band.set_values(self._lo.value(), self._hi.value())
+
+    def _on_band_slider(self, low: float, high: float) -> None:
+        """Slider moved: mirror into the spin boxes without echoing back."""
+        if self._building:
+            return
+        self._building = True
+        self._lo.setValue(low)
+        self._hi.setValue(high)
+        self._building = False
+        self._emit_settings()
+
+    def _sync_band_slider(self) -> None:
+        """Spin box changed: mirror into the slider (silently)."""
+        self._band.set_values(self._lo.value(), self._hi.value())
 
     def _apply_mode_ui(self, idx: int) -> None:
         self._chrom.setVisible(idx == 2)

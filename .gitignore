@@ -16,3 +16,4 @@ venv/
 *.avi
 *.mp4
 !source/*.mp4
+.claude/
