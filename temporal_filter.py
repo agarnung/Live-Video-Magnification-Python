@@ -184,9 +184,16 @@ class RieszTemporalFilter:
         phase_diff: CompExpMat,
         lvl: int,
     ) -> None:
-        """Forma directa II; escribe el resultado en result_holder[0]."""
-        b0, b1, b2 = self.its_b[0], self.its_b[1], self.its_b[2]
-        a0, a1, a2 = self.its_a[0], self.its_a[1], self.its_a[2]
+        """Direct Form II; writes the result into result_holder[0]."""
+        # Normalise by a0 once, on the coefficients. The previous code divided
+        # the output AND both state registers by a0 on every level of every
+        # frame, which is not the Direct Form II normalisation (the states must
+        # not be rescaled) and cost six array divisions per level. scipy always
+        # returns a0 == 1, so the old code was a no-op numerically -- but wrong
+        # in general and needlessly expensive.
+        a0 = self.its_a[0] or 1.0
+        b0, b1, b2 = (self.its_b[0] / a0, self.its_b[1] / a0, self.its_b[2] / a0)
+        a1, a2 = (self.its_a[1] / a0, self.its_a[2] / a0)
         ph = cexp_add(self._phase[lvl], phase_diff)
         self._phase[lvl] = ph
 
@@ -200,14 +207,6 @@ class RieszTemporalFilter:
         new_r0_sin = ph[1] * b1 + r1[1] - res_sin * a1
         new_r1_cos = ph[0] * b2 - res_cos * a2
         new_r1_sin = ph[1] * b2 - res_sin * a2
-
-        if a0 != 0:
-            res_cos = (res_cos / a0).astype(np.float32)
-            res_sin = (res_sin / a0).astype(np.float32)
-            new_r0_cos = (new_r0_cos / a0).astype(np.float32)
-            new_r0_sin = (new_r0_sin / a0).astype(np.float32)
-            new_r1_cos = (new_r1_cos / a0).astype(np.float32)
-            new_r1_sin = (new_r1_sin / a0).astype(np.float32)
 
         self._reg0[lvl] = (new_r0_cos, new_r0_sin)
         self._reg1[lvl] = (new_r1_cos, new_r1_sin)

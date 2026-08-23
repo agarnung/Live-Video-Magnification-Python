@@ -46,6 +46,9 @@ class CaptureWorker(QThread):
         self._drop = drop_if_full
         self._queue = frame_queue
         self._max_queue = max_queue
+        # Frames evicted by the latest-wins policy. Should stay at 0 for files;
+        # for cameras it is the honest measure of how far behind we are.
+        self._drops = 0
         self._stop = False
         self._cap: cv2.VideoCapture | None = None
         self._fps_samples: deque[int] = deque(maxlen=CAPTURE_FPS_STAT_QUEUE_LENGTH)
@@ -67,20 +70,30 @@ class CaptureWorker(QThread):
             if not ok:
                 break
             n += 1
-            if self._drop and self._queue.full():
-                try:
-                    self._queue.get_nowait()
-                except queue.Empty:
-                    pass
-            try:
-                self._queue.put(frame, timeout=0.5)
-            except queue.Full:
-                continue
-            dt_ms = int((time.perf_counter() - t_loop) * 1000)
-            if dt_ms > 0:
-                self._fps_samples.append(1000 // dt_ms)
+            if self._drop:
+                # Latest-wins: evict the oldest frame so the grab loop never
+                # stalls. Dropping is a deliberate policy here, and is counted.
+                if self._queue.full():
+                    try:
+                        self._queue.get_nowait()
+                        self._drops += 1
+                    except queue.Empty:
+                        pass
+                self._queue.put(frame)
+            else:
+                # Lossless: block until the consumer catches up. The previous
+                # code used put(timeout=0.5) and swallowed queue.Full, which
+                # silently dropped frames even with dropping disabled -- that
+                # breaks the continuity the temporal filters depend on.
+                self._queue.put(frame)
+
+            dt = time.perf_counter() - t_loop
+            if dt > 0:
+                # Float division: the old `1000 // dt_ms` quantised the rate so
+                # coarsely that 60 fps could only ever read as 62 or 76.
+                self._fps_samples.append(1.0 / dt)
             if n % 30 == 0 and self._fps_samples:
-                avg = sum(self._fps_samples) // len(self._fps_samples)
+                avg = sum(self._fps_samples) / len(self._fps_samples)
                 real_fps = self._cap.get(cv2.CAP_PROP_FPS)
                 self.capture_fps.emit(float(real_fps or avg))
 
@@ -103,6 +116,8 @@ class ProcessingWorker(QThread):
 
     def __init__(self, frame_queue: queue.Queue) -> None:
         super().__init__()
+        # Processing-resolution divisor (1, 2, 4 or 8); see PROCESSING_SCALES.
+        self._downscale = 1
         self._queue = frame_queue
         self._stop = False
         self._mutex = QMutex()
@@ -134,6 +149,23 @@ class ProcessingWorker(QThread):
         self._mutex.unlock()
         if emit_lv is not None:
             self.max_levels.emit(emit_lv)
+
+    def set_downscale(self, divisor: int) -> None:
+        """
+        Set the processing-resolution divisor (1, 2, 4 or 8).
+
+        Changing it alters the frame geometry, so the temporal state is
+        invalidated: the magnification filters hold per-pixel history that is
+        meaningless at a different resolution.
+        """
+        divisor = int(divisor) if divisor in (1, 2, 4, 8) else 1
+        self._mutex.lock()
+        changed = divisor != self._downscale
+        self._downscale = divisor
+        if changed:
+            self._magnificator.clear_buffer()
+            self._need_max_levels_for_full = True
+        self._mutex.unlock()
 
     def update_flags(self, f: ImageProcessingFlags) -> None:
         self._mutex.lock()
@@ -184,7 +216,23 @@ class ProcessingWorker(QThread):
                 if self._need_max_levels_for_full:
                     self._need_max_levels_for_full = False
                     emit_lv_full = self._magnificator.calculate_max_levels(rw, rh)
+            # Clamp the ROI to the frame: a stale ROI kept after the source
+            # changed resolution would otherwise index out of bounds.
+            fh, fw = frame.shape[:2]
+            x = max(0, min(x, fw - 1))
+            y = max(0, min(y, fh - 1))
+            rw = max(1, min(rw, fw - x))
+            rh = max(1, min(rh, fh - y))
             cur = frame[y : y + rh, x : x + rw].copy()
+
+            # Processing resolution: dividing each side by `downscale` cuts the
+            # pyramid cost quadratically, which is the single most effective
+            # performance control (1/4 is ~16x less work). INTER_AREA is the
+            # right filter for shrinking.
+            if self._downscale > 1:
+                dh = max(1, cur.shape[0] // self._downscale)
+                dw = max(1, cur.shape[1] // self._downscale)
+                cur = cv2.resize(cur, (dw, dh), interpolation=cv2.INTER_AREA)
 
             if self._flags.grayscale_on and cur.ndim == 3:
                 cur = cv2.cvtColor(cur, cv2.COLOR_BGR2GRAY)

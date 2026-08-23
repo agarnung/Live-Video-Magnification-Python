@@ -114,11 +114,18 @@ class CameraTab(QWidget):
         self._proc.max_levels.connect(self._opts.set_max_levels)
         self._opts.flags_changed.connect(self._proc.update_flags)
         self._opts.settings_changed.connect(self._proc.update_settings)
+        self._opts.downscale_changed.connect(self._proc.set_downscale)
         self._label.roi_changed.connect(self._on_roi)
         if isinstance(self._reader, CaptureWorker):
             self._reader.capture_fps.connect(self._proc.update_framerate)
+            # Keep the Nyquist clamp of the cutoff sliders in step with the
+            # rate the source actually delivers.
+            self._reader.capture_fps.connect(self._opts.set_capture_fps)
         else:
             self._reader.capture_fps.connect(self._proc.update_framerate)
+            # Keep the Nyquist clamp of the cutoff sliders in step with the
+            # rate the source actually delivers.
+            self._reader.capture_fps.connect(self._opts.set_capture_fps)
 
         self._proc.start()
         self._reader.start()

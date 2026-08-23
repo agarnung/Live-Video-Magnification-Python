@@ -26,12 +26,14 @@ class MagnifyOptions(QWidget):
 
     flags_changed = pyqtSignal(object)
     settings_changed = pyqtSignal(object)
+    downscale_changed = pyqtSignal(int)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._flags = ImageProcessingFlags()
         self._settings = ImageProcessingSettings()
         self._building = False
+        self._capture_fps = cfg.DEFAULT_CAPTURE_FPS
 
         root = QVBoxLayout(self)
         self._combo = QComboBox()
@@ -50,6 +52,17 @@ class MagnifyOptions(QWidget):
         self._gray = QCheckBox("Grayscale")
         self._gray.toggled.connect(self._emit_flags)
         root.addWidget(self._gray)
+
+        # Processing resolution. Shrinking the frame before the pyramid is the
+        # cheapest way to buy frame rate: the cost falls quadratically.
+        root.addWidget(QLabel("Processing resolution:"))
+        self._scale = QComboBox()
+        for d in cfg.PROCESSING_SCALES:
+            self._scale.addItem("Full" if d == 1 else f"1/{d}", d)
+        self._scale.currentIndexChanged.connect(
+            lambda _: self.downscale_changed.emit(self._scale.currentData())
+        )
+        root.addWidget(self._scale)
 
         opt = QGroupBox("Parameters")
         form = QFormLayout(opt)
@@ -103,22 +116,37 @@ class MagnifyOptions(QWidget):
         self._apply_mode_ui(idx)
         self._reset_defaults()
 
+    def set_capture_fps(self, fps: float) -> None:
+        """
+        Update the assumed capture rate and re-clamp the cutoff ranges.
+
+        Every mode expresses its band in Hz, so no cutoff above Nyquist can
+        mean anything. The previous fixed range of [0, 100] Hz let the user ask
+        for a 90 Hz band on a 30 fps camera.
+        """
+        if fps and fps > 0:
+            self._capture_fps = float(fps)
+            self._apply_cutoff_ranges()
+
+    def _apply_cutoff_ranges(self) -> None:
+        nyquist = max(0.1, self._capture_fps / 2.0)
+        for w in (self._lo, self._hi):
+            w.setRange(0.05, nyquist)
+        self._lo.setSuffix(" Hz")
+        self._hi.setSuffix(" Hz")
+
     def _apply_mode_ui(self, idx: int) -> None:
         self._chrom.setVisible(idx == 2)
+        # All modes take their band in Hz, bounded by Nyquist.
+        self._apply_cutoff_ranges()
         if idx == 1:
             self._wave.setVisible(False)
-            self._lo.setRange(0.0, 3.0)
-            self._hi.setRange(0.0, 3.0)
         elif idx == 2:
             self._wave.setVisible(True)
             self._wave.setRange(0.0, 100.0)
-            self._lo.setRange(0.0, 100.0)
-            self._hi.setRange(0.0, 100.0)
         elif idx == 3:
             self._wave.setVisible(True)
             self._wave.setRange(0.0, 100.0)
-            self._lo.setRange(0.0, 100.0)
-            self._hi.setRange(0.0, 100.0)
         else:
             self._wave.setVisible(False)
 

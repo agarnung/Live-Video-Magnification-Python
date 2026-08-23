@@ -6,7 +6,11 @@ import math
 import cv2
 import numpy as np
 
-from config import DEFAULT_LAP_MAG_EXAGGERATION
+from config import (
+    DEFAULT_CAPTURE_FPS,
+    DEFAULT_LAP_MAG_EXAGGERATION,
+    motion_hz_to_blend,
+)
 from riesz_pyramid import RieszPyramid
 from spatial_filter import (
     build_gauss_pyr_from_img,
@@ -25,7 +29,7 @@ from temporal_filter import (
 
 
 class Magnificator:
-    """Procesa buffers de frames y expone frames magnificados."""
+    """Processes frame buffers and produces magnified frames."""
 
     def __init__(
         self,
@@ -202,14 +206,19 @@ class Magnificator:
                 self._lowpass_lo = [x.copy() for x in pyr]
                 self._motion_pyramid = [x.copy() for x in pyr]
             else:
+                # co_low/co_high are Hz; the IIR pair consumes blend
+                # coefficients, so convert here (see config.motion_hz_to_blend).
+                fps = self._settings.framerate or DEFAULT_CAPTURE_FPS
+                blend_lo = motion_hz_to_blend(self._settings.co_low, fps)
+                blend_hi = motion_hz_to_blend(self._settings.co_high, fps)
                 for lev in range(self._levels):
                     dst, lhi, llo = iir_filter(
                         pyr[lev],
                         self._motion_pyramid[lev],
                         self._lowpass_hi[lev],
                         self._lowpass_lo[lev],
-                        self._settings.co_low,
-                        self._settings.co_high,
+                        blend_lo,
+                        blend_hi,
                     )
                     self._motion_pyramid[lev] = dst
                     self._lowpass_hi[lev] = lhi

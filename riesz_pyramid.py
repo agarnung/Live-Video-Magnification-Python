@@ -38,16 +38,15 @@ def _patch_nans(img: np.ndarray, val: float = 0.0) -> None:
 
 
 def _arc_cos(x: np.ndarray, result: np.ndarray) -> None:
-    flat_x = x.reshape(-1)
-    flat_r = result.reshape(-1)
-    for i in range(flat_x.size):
-        v = flat_x[i]
-        if v < -1.0:
-            flat_r[i] = math.pi
-        elif v > 1.0:
-            flat_r[i] = 0.0
-        else:
-            flat_r[i] = math.acos(v)
+    """
+    Elementwise arccos with the input clamped to [-1, 1].
+
+    Vectorised: the original per-pixel Python loop dominated the Riesz path.
+    Clamping the argument rather than the result keeps the values continuous at
+    the boundary, where the reference C++ instead returns the clamped input
+    (-1 or 1) -- which is not an angle at all.
+    """
+    np.arccos(np.clip(x, -1.0, 1.0), out=result)
 
 
 def _cos_sin_mag(mag: np.ndarray) -> CompExpMat:
@@ -210,22 +209,14 @@ class RieszPyramid:
 
     @staticmethod
     def _subsample(img: np.ndarray) -> np.ndarray:
-        h, w = img.shape[:2]
-        tmp_h = h // 2 + (h % 2)
-        tmp_w = w // 2 + (w % 2)
-        out = np.zeros((tmp_h, tmp_w), dtype=np.float32)
-        for y in range(0, h, 2):
-            for x in range(0, w, 2):
-                out[y // 2, x // 2] = img[y, x]
-        return out
+        """Keep every other row and column (vectorised stride, was a double loop)."""
+        return np.ascontiguousarray(img[::2, ::2], dtype=np.float32)
 
     @staticmethod
     def _inject_zeros_even(img: np.ndarray) -> np.ndarray:
-        h, w = img.shape[:2]
-        tmp = np.zeros((h, w), dtype=np.float32)
-        for y in range(0, h, 2):
-            for x in range(0, w, 2):
-                tmp[y, x] = img[y, x]
+        """Zero out the odd rows and columns (vectorised, was a double loop)."""
+        tmp = np.zeros(img.shape[:2], dtype=np.float32)
+        tmp[::2, ::2] = img[::2, ::2]
         return tmp
 
     def build_pyramid(self, frame: np.ndarray) -> None:

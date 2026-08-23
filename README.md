@@ -127,9 +127,77 @@ remain available and derivative works must carry the same licence.
 - N. Wadhwa, M. Rubinstein, F. Durand, W. T. Freeman,
   *Riesz Pyramids for Fast Phase-Based Video Magnification*, ICCP 2014.
 
+## Divergences from upstream
+
+Upstream was audited module by module and the following were brought across or
+fixed. Where the port now differs deliberately, the reason is given.
+
+**Correctness**
+
+- **Motion band is now in Hertz.** The mode inherited raw IIR blend
+  coefficients as defaults (`20.0`, `40.0`), which are not valid coefficients at
+  all — they must lie in `[0, 1)`. The filter computes `(1 - cutoff)`, so those
+  values give gains of −19 and −39; both low-pass states then grow without
+  bound (measured: ±3.5·10⁹ after six iterations) and their difference, the
+  motion signal, collapses to ~2·10⁻⁵. In other words the mode amplified
+  nothing. The UI now takes Hz and converts internally via
+  `config.motion_hz_to_blend`, as upstream does.
+- **Cutoffs are clamped to Nyquist**, and follow the rate the source reports.
+  The ranges were fixed at `[0, 100]` Hz, which on a 30 fps camera let you ask
+  for a 90 Hz band.
+- **Lossless queueing actually is lossless.** The capture loop used
+  `put(timeout=0.5)` and swallowed `queue.Full`, dropping frames even with
+  dropping disabled — which breaks the continuity the temporal filters rely on.
+  It now blocks, and evicted frames are counted when dropping is enabled.
+- **ROI is clamped to the frame.** A stale ROI kept after the source changed
+  resolution could index out of bounds.
+- **Direct Form II normalisation corrected.** The Riesz recursion divided the
+  output *and both state registers* by `a0`; the states must not be rescaled.
+  Since SciPy always returns `a0 == 1` this was a no-op numerically, but it also
+  cost six array divisions per level per frame. The coefficients are now
+  normalised once.
+- **Frame rate measurement.** `1000 // dt_ms` quantised so coarsely that 60 fps
+  could only ever read as 62 or 76.
+
+**Performance**
+
+- **Processing resolution 1/1–1/8** (`INTER_AREA`), upstream's most effective
+  performance control and previously absent. Cost falls quadratically —
+  measured on the Riesz mode from a 640×480 source:
+
+  | Resolution | Cost | Rate |
+  |---|---|---|
+  | Full (640×480) | 13.4 ms | 75 fps |
+  | 1/2 (320×240) | 2.6 ms | 390 fps |
+  | 1/4 (160×120) | 0.7 ms | 1442 fps |
+  | 1/8 (80×60) | 0.3 ms | 3470 fps |
+
+- **Vectorised the hot loops** in the Riesz path, which were per-pixel Python:
+  `arccos` 53.3 ms → 1.63 ms (**33×**), `subsample` 9.7 ms → 0.020 ms
+  (**485×**, bit-identical output).
+
+**Deliberate divergences**
+
+- `arccos` clamps its *argument* to `[-1, 1]`; upstream returns the clamped
+  input (−1 or 1), which is not an angle. The port keeps the values continuous.
+- Division guards (`np.divide(..., where=...)`) yield 0 where upstream produces
+  inf/NaN and patches some of them afterwards.
+- Grayscale phase magnification is implemented; upstream falls through.
+
 ## TODO
 
-- **Track upstream.** The original project has received major updates since this
-  port was branched off, so the port is currently behind. Review the changes in
-  [tschnz/Live-Video-Magnification](https://github.com/tschnz/Live-Video-Magnification)
-  and carry the relevant ones across.
+Upstream features not yet ported, roughly by value over effort:
+
+- [ ] Camera enumeration by name (`/dev/video*` via `VIDIOC_QUERYCAP`), so the
+      device list shows real cameras instead of a bare index spinner.
+- [ ] Playback transport for files: play/pause/stop, frame-accurate seek,
+      in/out trim, loop, manual speed — with a timeline widget.
+- [ ] Comparison views: processed / original / side-by-side / stacked.
+- [ ] Export to MP4 (H.264), AVI (MJPG) and MKV (FFV1), with trim and split.
+- [ ] Light/dark theme following the OS.
+- [ ] Real instrumentation: EMA frame rate, p95 latency, drop fraction, queue
+      depth — plus a status strip that flags when the pipeline falls behind.
+- [ ] Publish settings as an immutable snapshot instead of holding a mutex
+      across the whole frame, which stalls the GUI while dragging a slider.
+- [ ] Per-stage exception isolation: an exception in the magnifier currently
+      kills the worker thread silently.
