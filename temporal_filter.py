@@ -61,7 +61,7 @@ def iir_filter(
 def _ideal_bandpass_row_fft(
     plane: np.ndarray, cutoff_lo: float, cutoff_hi: float, framerate: float
 ) -> np.ndarray:
-    """FFT 1D por fila; índices de paso banda como en createIdealBandpassFilter (C++)."""
+    """Row-wise 1-D FFT; band-pass indices as in createIdealBandpassFilter (C++)."""
     clo = cutoff_lo + 0.01 if cutoff_lo == 0.0 else cutoff_lo
     h, w = plane.shape
     spec = np.fft.rfft(plane.astype(np.float64), axis=1)
@@ -79,7 +79,7 @@ def _ideal_bandpass_row_fft(
 
 
 def ideal_filter(src: np.ndarray, cutoff_lo: float, cutoff_hi: float, framerate: float) -> np.ndarray:
-    """Filtrado paso banda ideal por filas (magnificación de color)."""
+    """Ideal row-wise band-pass filtering (colour magnification)."""
     fps = framerate if framerate > 1e-6 else 30.0
     n_channels = 1 if src.ndim == 2 else src.shape[2]
     if n_channels == 1:

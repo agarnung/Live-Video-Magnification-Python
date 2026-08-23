@@ -1,4 +1,4 @@
-"""Diálogo conectar cámara o archivo (CameraConnectDialog)."""
+"""Camera / file connection dialog (CameraConnectDialog)."""
 
 from __future__ import annotations
 
@@ -18,18 +18,18 @@ from PyQt6.QtWidgets import (
 
 
 class ConnectDialog(QDialog):
-    """Selección de fuente: cámara (índice V4L) o ruta de vídeo."""
+    """Source selection: camera (V4L index) or path to a video file."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Conectar / Abrir")
+        self.setWindowTitle("Connect / Open")
         self._use_camera = True
         self._path = ""
 
         lay = QVBoxLayout(self)
         row = QHBoxLayout()
-        self._btn_cam = QPushButton("Cámara")
-        self._btn_vid = QPushButton("Archivo de vídeo")
+        self._btn_cam = QPushButton("Camera")
+        self._btn_vid = QPushButton("Video file")
         self._btn_cam.setCheckable(True)
         self._btn_vid.setCheckable(True)
         self._btn_cam.setChecked(True)
@@ -51,18 +51,18 @@ class ConnectDialog(QDialog):
         self._buf = QSpinBox()
         self._buf.setRange(1, 64)
         self._buf.setValue(8)
-        self._drop = QCheckBox("Descartar frames si la cola está llena")
+        self._drop = QCheckBox("Drop frames when the queue is full")
         self._path_edit = QLineEdit()
-        browse = QPushButton("Examinar…")
+        browse = QPushButton("Browse…")
         browse.clicked.connect(self._browse)
 
-        form.addRow("Dispositivo", self._device)
-        form.addRow("Ancho (0=auto)", self._width)
-        form.addRow("Alto (0=auto)", self._height)
-        form.addRow("FPS (0=auto)", self._fps)
-        form.addRow("Tamaño cola", self._buf)
+        form.addRow("Device index", self._device)
+        form.addRow("Width (0 = auto)", self._width)
+        form.addRow("Height (0 = auto)", self._height)
+        form.addRow("FPS (0 = auto)", self._fps)
+        form.addRow("Queue size", self._buf)
         form.addRow(self._drop)
-        form.addRow("Archivo", self._path_edit)
+        form.addRow("File", self._path_edit)
         form.addRow(browse)
         lay.addLayout(form)
 
@@ -84,21 +84,23 @@ class ConnectDialog(QDialog):
         self._btn_cam.setChecked(True)
         self._btn_vid.setChecked(False)
         self._label_hint.setText(
-            "Índice de cámara (0 suele ser la webcam). En Linux se usa el backend por defecto de OpenCV."
+            "Camera index (0 is usually the built-in webcam). Note that not "
+            "every /dev/videoN is a usable camera: on many laptops the odd "
+            "indices are metadata nodes."
         )
 
     def _pick_vid(self) -> None:
         self._use_camera = False
         self._btn_vid.setChecked(True)
         self._btn_cam.setChecked(False)
-        self._label_hint.setText("Elija un archivo .mp4, .avi, .mkv, etc.")
+        self._label_hint.setText("Choose a .mp4, .avi, .mkv, .mov or .webm file.")
 
     def _browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Vídeo",
+            "Open video",
             "",
-            "Vídeo (*.mp4 *.avi *.mkv *.mov *.webm);;Todos (*.*)",
+            "Video (*.mp4 *.avi *.mkv *.mov *.webm);;All files (*.*)",
         )
         if path:
             self._path_edit.setText(path)

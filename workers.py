@@ -22,7 +22,7 @@ from structures import (
 )
 
 class CaptureWorker(QThread):
-    """Lee frames de la cámara y los encola."""
+    """Reads frames from the camera and pushes them onto the queue."""
 
     frame_ready = pyqtSignal(np.ndarray)
     stats = pyqtSignal(object)
@@ -120,7 +120,7 @@ class ProcessingWorker(QThread):
         self._fps_sum = 0
 
     def set_roi(self, x: int, y: int, w: int, h: int) -> None:
-        """No emitir señales con el mutex tomado: el GUI puede llamar a update_settings y bloquearse."""
+        """Do not emit signals while holding the mutex: the GUI may call update_settings and deadlock."""
         self._mutex.lock()
         self._roi = (x, y, w, h)
         self._processing_buffer.clear()

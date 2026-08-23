@@ -1,4 +1,4 @@
-"""Panel de opciones de magnificación (MagnifyOptions)."""
+"""Magnification options panel (MagnifyOptions)."""
 
 from __future__ import annotations
 
@@ -37,21 +37,21 @@ class MagnifyOptions(QWidget):
         self._combo = QComboBox()
         self._combo.addItems(
             [
-                "Sin magnificación",
-                "Color (Euler)",
-                "Movimiento (Laplace)",
-                "Fase (Riesz)",
+                "No magnification",
+                "Colour (Eulerian)",
+                "Motion (Laplacian)",
+                "Phase (Riesz)",
             ]
         )
         self._combo.currentIndexChanged.connect(self._on_mode_changed)
-        root.addWidget(QLabel("Modo:"))
+        root.addWidget(QLabel("Mode:"))
         root.addWidget(self._combo)
 
-        self._gray = QCheckBox("Escala de grises")
+        self._gray = QCheckBox("Grayscale")
         self._gray.toggled.connect(self._emit_flags)
         root.addWidget(self._gray)
 
-        opt = QGroupBox("Parámetros")
+        opt = QGroupBox("Parameters")
         form = QFormLayout(opt)
         self._amp = QSpinBox()
         self._amp.setRange(0, 500)
@@ -83,15 +83,15 @@ class MagnifyOptions(QWidget):
             else:
                 w.valueChanged.connect(self._emit_settings)
 
-        form.addRow("Amplificación", self._amp)
-        form.addRow("Longitud/corte (según modo)", self._wave)
-        form.addRow("Banda baja", self._lo)
-        form.addRow("Banda alta", self._hi)
-        form.addRow("Atenuación cromática %", self._chrom)
-        form.addRow("Niveles pirámide", self._levels)
+        form.addRow("Amplification", self._amp)
+        form.addRow("Wavelength / cutoff (mode-dependent)", self._wave)
+        form.addRow("Low cutoff (Hz)", self._lo)
+        form.addRow("High cutoff (Hz)", self._hi)
+        form.addRow("Chroma attenuation %", self._chrom)
+        form.addRow("Pyramid levels", self._levels)
         root.addWidget(opt)
 
-        btn = QPushButton("Valores por defecto (modo actual)")
+        btn = QPushButton("Reset to defaults (current mode)")
         btn.clicked.connect(self._reset_defaults)
         root.addWidget(btn)
 

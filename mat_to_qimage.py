@@ -1,4 +1,4 @@
-"""Conversión OpenCV BGR/gray → QImage (MatToQImage.cpp)."""
+"""OpenCV BGR/gray to QImage conversion (MatToQImage.cpp)."""
 
 from __future__ import annotations
 

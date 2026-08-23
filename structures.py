@@ -9,7 +9,7 @@ from PyQt6.QtCore import QRect
 
 @dataclass
 class ImageProcessingSettings:
-    """Parámetros de magnificación y vídeo."""
+    """Magnification and video parameters."""
 
     amplification: float = 0.0
     co_wavelength: float = 0.0
@@ -34,7 +34,7 @@ class ImageProcessingFlags:
 
 @dataclass
 class MouseData:
-    """Estado del ratón sobre el visor."""
+    """Mouse state over the viewer."""
 
     selection_box: QRect = field(default_factory=QRect)
     left_button_release: bool = False
@@ -43,7 +43,7 @@ class MouseData:
 
 @dataclass
 class ThreadStatisticsData:
-    """Estadísticas para la GUI."""
+    """Statistics reported to the GUI."""
 
     average_fps: int = 0
     n_frames_processed: float = 0.0

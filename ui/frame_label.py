@@ -1,4 +1,4 @@
-"""Etiqueta de vídeo con ROI arrastrable (FrameLabel)."""
+"""Video label with a draggable ROI (FrameLabel)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from config import MIN_ROI_SIDE
 
 
 class FrameLabel(QLabel):
-    """Muestra QImage y permite definir rectángulo ROI con el ratón."""
+    """Displays a QImage and lets the user drag a ROI rectangle."""
 
     roi_changed = pyqtSignal(QRect)
 
@@ -33,7 +33,7 @@ class FrameLabel(QLabel):
         self._menu.exec(self.mapToGlobal(pos))
 
     def _clear_roi(self) -> None:
-        """ROI completo = usar todo el frame de captura (no el tamaño del QImage mostrado)."""
+        """Full ROI = the whole captured frame, not the size of the QImage shown."""
         self._rubber = QRect()
         self._dragging = False
         self.update()
@@ -44,7 +44,7 @@ class FrameLabel(QLabel):
         self._refresh_pixmap()
 
     def _pixmap_rect(self) -> QRect | None:
-        """Rectángulo del pixmap escalado en coordenadas del widget."""
+        """Rectangle of the scaled pixmap, in widget coordinates."""
         pix = self.pixmap()
         if pix is None or pix.isNull() or self._full_image is None:
             return None

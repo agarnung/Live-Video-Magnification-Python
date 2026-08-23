@@ -1,4 +1,4 @@
-"""Constantes equivalentes a Config.h del proyecto C++ original."""
+"""Constants mirroring Config.h from the original C++ project."""
 
 PROCESSING_FPS_STAT_QUEUE_LENGTH = 32
 CAPTURE_FPS_STAT_QUEUE_LENGTH = 32
@@ -30,5 +30,5 @@ DEFAULT_PB_COWAVELENGTH = 25
 DEFAULT_PB_COLOW = 0.1
 DEFAULT_PB_COHIGH = 1.0
 
-# ROI en el visor: tamaño mínimo en píxeles del frame fuente (pirámides / OpenCV).
+# Viewer ROI: minimum size in pixels of the source frame (pyramids / OpenCV).
 MIN_ROI_SIDE = 96

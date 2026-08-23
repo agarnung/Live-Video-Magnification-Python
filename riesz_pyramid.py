@@ -1,4 +1,4 @@
-"""Pirámide de Riesz y magnificación basada en fase (RieszPyramid.cpp)."""
+"""Riesz pyramid and phase-based magnification (RieszPyramid.cpp)."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ IMAG_K = REAL_K.T
 
 
 class RieszPyramidLevel:
-    """Un nivel de la pirámide de Riesz."""
+    """A single level of the Riesz pyramid."""
 
     def __init__(self) -> None:
         self.its_size: tuple[int, int] = (0, 0)
@@ -200,7 +200,7 @@ class RieszPyramidLevel:
 
 
 class RieszPyramid:
-    """Pirámide completa."""
+    """The complete pyramid."""
 
     def __init__(self) -> None:
         self.num_levels = 0

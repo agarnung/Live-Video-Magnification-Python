@@ -1,4 +1,4 @@
-"""Ventana principal con pestañas (MainWindow)."""
+"""Main window with one tab per source (MainWindow)."""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ from ui.connect_dialog import ConnectDialog
 
 
 class MainWindow(QMainWindow):
-    """Contenedor de pestañas por cada cámara o vídeo abierto."""
+    """Tab container: one tab per open camera or video."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Magnificación de vídeo en tiempo real (Python/PyQt)")
+        self.setWindowTitle("Live Video Magnification (Python/PyQt)")
         self.resize(1200, 720)
 
         self._tabs = QTabWidget()
@@ -30,21 +30,21 @@ class MainWindow(QMainWindow):
         self._tabs.tabCloseRequested.connect(self._close_tab)
         self.setCentralWidget(self._tabs)
 
-        placeholder = QLabel("Conecte una cámara o abra un vídeo (Ctrl+O).")
+        placeholder = QLabel("Connect a camera or open a video (Ctrl+O).")
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._tabs.addTab(placeholder, "Inicio")
+        self._tabs.addTab(placeholder, "Start")
 
-        act_open = QAction("Conectar / Abrir…", self)
+        act_open = QAction("Connect / Open…", self)
         act_open.setShortcut(QKeySequence.StandardKey.Open)
         act_open.triggered.connect(self._connect)
         self.menuBar().addAction(act_open)
 
-        act_quit = QAction("Salir", self)
+        act_quit = QAction("Quit", self)
         act_quit.setShortcut(QKeySequence.StandardKey.Quit)
         act_quit.triggered.connect(self.close)
         self.menuBar().addAction(act_quit)
 
-        act_about = QAction("Acerca de", self)
+        act_about = QAction("About", self)
         act_about.triggered.connect(self._about)
         self.menuBar().addAction(act_about)
 
@@ -62,11 +62,11 @@ class MainWindow(QMainWindow):
                 drop=dlg.drop_frames(),
                 queue_size=dlg.queue_size(),
             )
-            title = f"Cámara {dlg.device_id()}"
+            title = f"Camera {dlg.device_id()}"
         else:
             path = dlg.video_path()
             if not path:
-                QMessageBox.warning(self, "Error", "Seleccione un archivo de vídeo.")
+                QMessageBox.warning(self, "Error", "Please select a video file.")
                 return
             tab = CameraTab(
                 False,
@@ -92,17 +92,19 @@ class MainWindow(QMainWindow):
             w.shutdown()
         self._tabs.removeTab(index)
         if self._tabs.count() == 0:
-            ph = QLabel("Conecte una cámara o abra un vídeo (Ctrl+O).")
+            ph = QLabel("Connect a camera or open a video (Ctrl+O).")
             ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._tabs.addTab(ph, "Inicio")
+            self._tabs.addTab(ph, "Start")
 
     def _about(self) -> None:
         QMessageBox.about(
             self,
-            "Acerca de",
-            "<p>Magnificación Euleriana en tiempo real, puerto a Python con PyQt6 y OpenCV.</p>"
-            "<p>Basado en el proyecto GPLv3 "
-            "<a href='https://github.com/tschnz/Live-Video-Magnification'>Live-Video-Magnification</a>.</p>",
+            "About",
+            "<p>Real-time Eulerian video magnification &mdash; a Python port "
+            "built with PyQt6 and OpenCV.</p>"
+            "<p>Based on the GPLv3 project "
+            "<a href='https://github.com/tschnz/Live-Video-Magnification'>"
+            "Live-Video-Magnification</a> by Jens Schindel.</p>",
         )
 
     def closeEvent(self, event) -> None:

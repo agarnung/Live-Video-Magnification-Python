@@ -1,4 +1,4 @@
-"""Magnificación de color, Laplace y Riesz (Magnificator.cpp)."""
+"""Colour, Laplacian and Riesz magnification (Magnificator.cpp)."""
 
 from __future__ import annotations
 
@@ -96,8 +96,9 @@ class Magnificator:
         while self._current_frame < n:
             inp = buf.pop(0)
             p_channels = inp.shape[2] if inp.ndim == 3 else 1
-            # Checkbox «grises»: si está desactivado y hay BGR, magnificar en color
-            # (el C++ original hace lo contrario con FC1/FC3; aquí seguimos la UI).
+            # "Grayscale" checkbox: when unchecked and the frame is BGR,
+            # magnify in colour. The original C++ decides this from FC1/FC3;
+            # here we follow the UI instead.
             want_bgr = (not self._flags.grayscale_on) and p_channels >= 3
             if want_bgr:
                 inp_f = inp[:, :, :3].astype(np.float32)

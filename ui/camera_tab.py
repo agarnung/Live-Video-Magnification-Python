@@ -1,4 +1,4 @@
-"""Pestaña cámara o archivo: captura + procesamiento + opciones."""
+"""Camera or file tab: capture + processing + options."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from workers import CaptureWorker, ProcessingWorker
 
 
 class VideoFileWorker(QThread):
-    """Lee un archivo de vídeo y encola frames."""
+    """Reads a video file and pushes frames onto the queue."""
 
     stats = pyqtSignal(object)
     capture_fps = pyqtSignal(float)
@@ -66,7 +66,7 @@ class VideoFileWorker(QThread):
 
 
 class CameraTab(QWidget):
-    """Widget principal de una fuente (cámara o archivo)."""
+    """Main widget for one source (camera or file)."""
 
     def __init__(self, use_camera: bool, **kwargs) -> None:
         super().__init__()
@@ -93,7 +93,7 @@ class CameraTab(QWidget):
         split = QSplitter(Qt.Orientation.Horizontal)
         left = QVBoxLayout()
         self._label = FrameLabel()
-        self._label.setText("Esperando imagen…")
+        self._label.setText("Waiting for video…")
         self._fps_lbl = QLabel("FPS: —")
         left_w = QWidget()
         left_w.setLayout(left)
@@ -130,7 +130,7 @@ class CameraTab(QWidget):
         self._label.set_image(img)
 
     def _on_stats(self, st) -> None:
-        self._fps_lbl.setText(f"FPS proc. ~{getattr(st, 'average_fps', 0)}")
+        self._fps_lbl.setText(f"Processing ~{getattr(st, 'average_fps', 0)} FPS")
 
     def shutdown(self) -> None:
         self._proc.stop()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Punto de entrada de la aplicación.
+Application entry point.
 
     python main.py
 """
@@ -8,5 +8,5 @@ Punto de entrada de la aplicación.
 from ui.main_window import run_app
 
 if __name__ == "__main__":
-    # run_app() ya invoca sys.exit(app.exec()) internamente.
+    # run_app() already calls sys.exit(app.exec()) internally.
     run_app()

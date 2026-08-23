@@ -49,7 +49,7 @@ git clone https://github.com/agarnung/Live-Video-Magnification-Python.git
 cd Live-Video-Magnification-Python
 
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 python main.py
