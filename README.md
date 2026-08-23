@@ -1,5 +1,7 @@
 # Live-Video-Magnification-Python
 
+![app](assets/app.png)
+
 A **Python/PyQt6 port** of [Live-Video-Magnification](https://github.com/tschnz/Live-Video-Magnification)
 by [tschnz](https://github.com/tschnz), originally written in C++/Qt with OpenCV.
 
@@ -49,7 +51,7 @@ git clone https://github.com/agarnung/Live-Video-Magnification-Python.git
 cd Live-Video-Magnification-Python
 
 python3 -m venv .venv
-source .venv/bin/activate # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 
 python main.py
@@ -124,3 +126,10 @@ remain available and derivative works must carry the same licence.
   ACM Trans. Graph. 31(4), 2012. [Project page](https://people.csail.mit.edu/mrub/evm/)
 - N. Wadhwa, M. Rubinstein, F. Durand, W. T. Freeman,
   *Riesz Pyramids for Fast Phase-Based Video Magnification*, ICCP 2014.
+
+## TODO
+
+- **Track upstream.** The original project has received major updates since this
+  port was branched off, so the port is currently behind. Review the changes in
+  [tschnz/Live-Video-Magnification](https://github.com/tschnz/Live-Video-Magnification)
+  and carry the relevant ones across.
