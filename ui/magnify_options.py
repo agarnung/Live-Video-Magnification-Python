@@ -22,7 +22,7 @@ from structures import ImageProcessingFlags, ImageProcessingSettings
 
 
 class MagnifyOptions(QWidget):
-    """Controles equivalentes al widget de opciones del proyecto Qt original."""
+    """Controls equivalent to the options widget of the original Qt project."""
 
     flags_changed = pyqtSignal(object)
     settings_changed = pyqtSignal(object)
@@ -214,3 +214,20 @@ class MagnifyOptions(QWidget):
         if self._levels.value() > max_lv:
             self._levels.setValue(max_lv)
             self._emit_settings()
+
+    def current_settings(self) -> ImageProcessingSettings:
+        """
+        Snapshot of the parameters, for pre-filling the export dialog.
+
+        A copy, not the live object: the panel keeps mutating its instance as
+        the user drags sliders, and an export request must not follow along.
+        """
+        return ImageProcessingSettings(**vars(self._settings))
+
+    def current_flags(self) -> ImageProcessingFlags:
+        """Snapshot of the mode flags; a copy, for the same reason."""
+        return ImageProcessingFlags(**vars(self._flags))
+
+    def max_levels(self) -> int:
+        """Upper bound the pyramid-levels control is currently clamped to."""
+        return int(self._levels.maximum())

@@ -1,4 +1,4 @@
-"""Hilos de captura y procesamiento (CaptureThread / ProcessingThread)."""
+"""Capture and processing threads (CaptureThread / ProcessingThread)."""
 
 from __future__ import annotations
 
@@ -16,9 +16,11 @@ from config import (
 from mat_to_qimage import mat_to_qimage
 from magnificator import Magnificator
 from structures import (
+    DisplayFrame,
     ImageProcessingFlags,
     ImageProcessingSettings,
     ThreadStatisticsData,
+    ViewMode,
 )
 
 class CaptureWorker(QThread):
@@ -108,8 +110,9 @@ class CaptureWorker(QThread):
 
 
 class ProcessingWorker(QThread):
-    """Magnifica frames de la cola y emite QImage."""
+    """Magnifies queued frames and publishes {processed, original} pairs."""
 
+    # One signal carrying ONE DisplayFrame, never two signals: see DisplayFrame.
     new_frame = pyqtSignal(object)
     stats = pyqtSignal(object)
     max_levels = pyqtSignal(int)
@@ -124,6 +127,9 @@ class ProcessingWorker(QThread):
         self._flags = ImageProcessingFlags()
         self._settings = ImageProcessingSettings()
         self._roi = (0, 0, 0, 0)
+        # Views that never show the original pane do not need the extra QImage
+        # conversion; ORIGINAL additionally bypasses magnification altogether.
+        self._view_mode = ViewMode.PROCESSED
         self._need_max_levels_for_full = True
         self._processing_buffer: list[np.ndarray] = []
         self._buffer_len = 2
@@ -165,6 +171,27 @@ class ProcessingWorker(QThread):
         if changed:
             self._magnificator.clear_buffer()
             self._need_max_levels_for_full = True
+        self._mutex.unlock()
+
+    def set_view_mode(self, mode: ViewMode) -> None:
+        """
+        Select which panes the display needs.
+
+        In ORIGINAL mode the magnification output is never shown, so the whole
+        pyramid is skipped -- that is the point of the bypass, it buys back the
+        CPU. The temporal state is dropped on the way in and out because the
+        filters would otherwise resume with a history full of frames they never
+        saw, producing a visible transient.
+        """
+        self._mutex.lock()
+        changed = mode is not self._view_mode
+        bypass_toggled = changed and (
+            mode is ViewMode.ORIGINAL or self._view_mode is ViewMode.ORIGINAL
+        )
+        self._view_mode = mode
+        if bypass_toggled:
+            self._processing_buffer.clear()
+            self._magnificator.clear_buffer()
         self._mutex.unlock()
 
     def update_flags(self, f: ImageProcessingFlags) -> None:
@@ -237,29 +264,45 @@ class ProcessingWorker(QThread):
             if self._flags.grayscale_on and cur.ndim == 3:
                 cur = cv2.cvtColor(cur, cv2.COLOR_BGR2GRAY)
 
-            self._processing_buffer.append(cur)
+            # The "original" tap is this frame: post-ROI/downscale/grayscale
+            # but PRE-magnification, matching the first-stage tap of the C++
+            # chain. Taken before the buffer is handed to the magnificator,
+            # which may modify its entries in place.
+            original = cur.copy()
+
+            view_mode = self._view_mode
+            bypass = view_mode is ViewMode.ORIGINAL
 
             out = cur
-            if len(self._processing_buffer) == self._buffer_len:
-                if self._flags.color_magnify_on:
-                    self._magnificator.color_magnify()
-                    if self._magnificator.has_frame():
-                        out = self._magnificator.get_frame_last()
-                elif self._flags.laplace_magnify_on:
-                    self._magnificator.laplace_magnify()
-                    if self._magnificator.has_frame():
-                        out = self._magnificator.get_frame_last()
-                elif self._flags.riesz_magnify_on:
-                    self._magnificator.riesz_magnify()
-                    if self._magnificator.has_frame():
-                        out = self._magnificator.get_frame_last()
-                else:
-                    self._processing_buffer.pop(0)
+            if bypass:
+                # No pyramid work at all: nothing downstream reads the result.
+                pass
+            else:
+                self._processing_buffer.append(cur)
+                if len(self._processing_buffer) == self._buffer_len:
+                    if self._flags.color_magnify_on:
+                        self._magnificator.color_magnify()
+                        if self._magnificator.has_frame():
+                            out = self._magnificator.get_frame_last()
+                    elif self._flags.laplace_magnify_on:
+                        self._magnificator.laplace_magnify()
+                        if self._magnificator.has_frame():
+                            out = self._magnificator.get_frame_last()
+                    elif self._flags.riesz_magnify_on:
+                        self._magnificator.riesz_magnify()
+                        if self._magnificator.has_frame():
+                            out = self._magnificator.get_frame_last()
+                    else:
+                        self._processing_buffer.pop(0)
 
             if out.ndim == 2:
                 out_disp = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
             else:
                 out_disp = out
+            if original.ndim == 2:
+                orig_disp = cv2.cvtColor(original, cv2.COLOR_GRAY2BGR)
+            else:
+                orig_disp = original
 
             self._mutex.unlock()
 
@@ -268,7 +311,15 @@ class ProcessingWorker(QThread):
 
             dt_ms = int((time.perf_counter() - t0) * 1000)
             self._update_fps_stats(dt_ms)
-            self.new_frame.emit(mat_to_qimage(out_disp))
+            # Both panes leave the worker in the same object, so the display
+            # cannot pair a processed frame with a different original.
+            need_original = view_mode is not ViewMode.PROCESSED
+            self.new_frame.emit(
+                DisplayFrame(
+                    processed=mat_to_qimage(out_disp),
+                    original=mat_to_qimage(orig_disp) if need_original else None,
+                )
+            )
 
             st = ThreadStatisticsData()
             st.n_frames_processed = 1
@@ -289,3 +340,11 @@ class ProcessingWorker(QThread):
             self._proc_times.clear()
             self._sample_n = 0
             self._fps_sum = 0
+
+    def downscale(self) -> int:
+        """Current processing-resolution divisor, so an export can match the preview."""
+        self._mutex.lock()
+        try:
+            return self._downscale
+        finally:
+            self._mutex.unlock()
