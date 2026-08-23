@@ -1,22 +1,18 @@
-# Build intermediates
-/build/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
 
-# Shippable artifacts (CPack packages + AppImage all land here)
-/dist/
-
-# Generated compile database (machine-specific absolute paths)
-compile_commands.json
-
-# vcpkg manifest-mode installed tree
-/vcpkg_installed/
-
-# Machine-specific CMake preset overrides (e.g. CMAKE_MAKE_PROGRAM for Ninja)
-CMakeUserPresets.json
-
-# IDE / editor
-/.vs/
+# Entorno / IDE
 /.vscode/
+/.idea/
 *.user
 
-# AppImage packaging: downloaded linuxdeploy/appimagetool cache
-/packaging/.tools/
+# Salidas
+/dist/
+/build/
+*.avi
+*.mp4
+!source/*.mp4

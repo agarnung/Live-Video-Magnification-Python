@@ -1,0 +1,1 @@
+"""Widgets de interfaz PyQt."""
