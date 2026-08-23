@@ -109,6 +109,29 @@ class MainWindow(QMainWindow):
             "Live-Video-Magnification</a> by Jens Schindel.</p>",
         )
 
+    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """
+        F11 toggles fullscreen; Escape leaves it.
+
+        Handled here rather than as always-live QShortcuts so that Escape only
+        acts when already fullscreen -- otherwise it would swallow the key from
+        dialogs and from any widget that uses it to cancel.
+        """
+        key = event.key()
+        if key == Qt.Key.Key_F11:
+            self.setWindowState(
+                self.windowState() ^ Qt.WindowState.WindowFullScreen
+            )
+            event.accept()
+            return
+        if key == Qt.Key.Key_Escape and self.isFullScreen():
+            self.setWindowState(
+                self.windowState() & ~Qt.WindowState.WindowFullScreen
+            )
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def closeEvent(self, event) -> None:
         for i in range(self._tabs.count()):
             w = self._tabs.widget(i)
