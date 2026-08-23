@@ -62,7 +62,9 @@ class MainWindow(QMainWindow):
                 drop=dlg.drop_frames(),
                 queue_size=dlg.queue_size(),
             )
-            title = f"Camera {dlg.device_id()}"
+            # Prefer the driver-reported name: "Integrated Camera" tells the
+            # user which tab is which, "Camera 2" does not.
+            title = dlg.device_name() or f"Camera {dlg.device_id()}"
         else:
             path = dlg.video_path()
             if not path:

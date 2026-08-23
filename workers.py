@@ -13,6 +13,7 @@ from config import (
     CAPTURE_FPS_STAT_QUEUE_LENGTH,
     PROCESSING_FPS_STAT_QUEUE_LENGTH,
 )
+from camera_enumerator import preferred_capture_apis
 from mat_to_qimage import mat_to_qimage
 from magnificator import Magnificator
 from structures import (
@@ -54,7 +55,18 @@ class CaptureWorker(QThread):
         self._fps_samples: deque[int] = deque(maxlen=CAPTURE_FPS_STAT_QUEUE_LENGTH)
 
     def run(self) -> None:
-        self._cap = cv2.VideoCapture(self._device_id)
+        # Try the platform-native backend first and fall back to CAP_ANY: the
+        # indices reported by the enumerator are V4L2 ordinals, so opening with
+        # the same backend guarantees index and device stay in agreement.
+        for api in preferred_capture_apis():
+            cap = cv2.VideoCapture(self._device_id, api)
+            if cap.isOpened():
+                self._cap = cap
+                break
+            cap.release()
+        if self._cap is None:
+            return
+
         if self._width > 0:
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
         if self._height > 0:
