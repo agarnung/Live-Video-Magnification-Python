@@ -8,7 +8,7 @@ from PyQt6.QtGui import QImage
 
 
 def mat_to_qimage(mat: np.ndarray) -> QImage:
-    """Convierte ndarray uint8 BGR/BGRA/gray o float32 gray normalizado."""
+    """Convert a uint8 BGR/BGRA/gray or normalized float32 gray ndarray."""
     if mat is None or mat.size == 0:
         return QImage()
 

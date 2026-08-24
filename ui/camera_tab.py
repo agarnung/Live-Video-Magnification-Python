@@ -4,21 +4,28 @@ from __future__ import annotations
 
 import queue
 
-from PyQt6.QtCore import QThread, QRect, Qt, QTimer
+import cv2
+from PyQt6.QtCore import QThread, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
+from exporter import ExportPhase, Exporter
 from instrumentation import Instrumentation
 from playback import VideoFileWorker
+from structures import DisplayFrame, ThreadStatisticsData, ViewMode
+from ui.export_dialogs import ExportProgressDialog, ExportSeed, ExportSettingsDialog
 from ui.frame_label import FrameLabel
 from ui.magnify_options import MagnifyOptions
 from ui.status_strip import StatusStrip
@@ -73,13 +80,44 @@ class CameraTab(QWidget):
                 self._instr,
             )
 
+        # Export state: the source path (files only) is what the exporter
+        # re-reads, so a camera tab has nothing to export from.
+        self._source_path: str | None = None if use_camera else str(kwargs["path"])
+        self._exporter = Exporter()
+        self._export_dialog: ExportProgressDialog | None = None
+        self._export_timer = QTimer(self)
+        self._export_timer.setInterval(150)
+        self._export_timer.timeout.connect(self._poll_export)
+        self._roi: tuple[int, int, int, int] = (0, 0, 0, 0)
+        self._capture_fps = 30.0
+
         split = QSplitter(Qt.Orientation.Horizontal)
         left = QVBoxLayout()
+
+        # View selector: the four comparison modes of the C++ DisplayWidget.
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("View:"))
+        self._view = QComboBox()
+        self._view.addItem("Processed", ViewMode.PROCESSED)
+        self._view.addItem("Original", ViewMode.ORIGINAL)
+        self._view.addItem("Side by side", ViewMode.SIDE_BY_SIDE)
+        self._view.addItem("Stacked", ViewMode.STACKED)
+        self._view.currentIndexChanged.connect(self._on_view_changed)
+        bar.addWidget(self._view)
+        bar.addStretch(1)
+        self._export_btn = QPushButton("Export video…")
+        self._export_btn.setEnabled(self._source_path is not None)
+        if self._source_path is None:
+            self._export_btn.setToolTip("Export is available for file sources only.")
+        self._export_btn.clicked.connect(self._on_export)
+        bar.addWidget(self._export_btn)
+
         self._label = FrameLabel()
         self._label.setText("Waiting for video\u2026")
         left_w = QWidget()
         left_w.setLayout(left)
-        left.addWidget(self._label)
+        left.addLayout(bar)
+        left.addWidget(self._label, 1)
 
         self._timeline: TimelineView | None = None
         self._transport: QWidget | None = None
@@ -120,7 +158,7 @@ class CameraTab(QWidget):
         self._label.roi_changed.connect(self._on_roi)
         self._reader.capture_fps.connect(self._proc.update_framerate)
         # Keep the Nyquist clamp of the cutoff sliders in step with the rate the
-        # source actually delivers.
+        # source actually delivers. Both reader kinds expose the same signal.
         self._reader.capture_fps.connect(self._opts.set_capture_fps)
         self._reader.capture_fps.connect(self._on_capture_fps)
 
@@ -229,10 +267,17 @@ class CameraTab(QWidget):
     # ------------------------------------------------------------------
 
     def _on_roi(self, r: QRect) -> None:
+        self._roi = (r.x(), r.y(), r.width(), r.height())
         self._proc.set_roi(r.x(), r.y(), r.width(), r.height())
 
-    def _on_frame(self, img: QImage) -> None:
-        self._label.set_image(img)
+    def _on_view_changed(self, index: int) -> None:
+        """Tell both the display and the worker: only the worker can skip work."""
+        mode: ViewMode = self._view.itemData(index)
+        self._label.set_view_mode(mode)
+        self._proc.set_view_mode(mode)
+
+    def _on_frame(self, frame: DisplayFrame) -> None:
+        self._label.set_display_frame(frame)
         self._instr.on_displayed()
 
     def _on_stats(self, st) -> None:
@@ -255,13 +300,84 @@ class CameraTab(QWidget):
             self._instr.snapshot(), self._target_fps, True, self._is_camera
         )
 
+    def _on_export(self) -> None:
+        if self._source_path is None:
+            return
+        if self._exporter.is_running():
+            QMessageBox.information(self, "Export", "An export is already running.")
+            return
+        seed = ExportSeed(
+            source_path=self._source_path,
+            settings=self._opts.current_settings(),
+            flags=self._opts.current_flags(),
+            roi=self._roi,
+            downscale=self._proc.downscale(),
+            capture_fps=self._capture_fps,
+            frame_count=self._frame_count(),
+            max_levels=self._opts.max_levels(),
+        )
+        dlg = ExportSettingsDialog(seed, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        request = dlg.request()
+        if request is None or not request.output_path:
+            return
+
+        self._export_dialog = ExportProgressDialog(self)
+        self._export_dialog.aborted.connect(self._exporter.abort)
+        self._exporter.start(request)
+        self._export_timer.start()
+        self._export_dialog.exec()
+
+    def _frame_count(self) -> int:
+        """Probe the file's length for the trim spinboxes; 0 when unknown."""
+        if self._source_path is None:
+            return 0
+        cap = cv2.VideoCapture(self._source_path)
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) if cap.isOpened() else 0
+        cap.release()
+        return max(0, n)
+
+    def _poll_export(self) -> None:
+        """
+        Pull the worker's progress snapshot.
+
+        Polling rather than signalling keeps the encoder thread free of Qt: it
+        publishes a plain dataclass under a lock and never blocks on the GUI.
+        """
+        if self._export_dialog is None:
+            return
+        p = self._exporter.progress()
+        if p.phase in (ExportPhase.PROCESSING, ExportPhase.FINALIZING):
+            note = "Finalizing…" if p.phase is ExportPhase.FINALIZING else "Encoding"
+            self._export_dialog.set_progress(p.frames_done, p.frames_total, note)
+            return
+
+        self._export_timer.stop()
+        dlg, self._export_dialog = self._export_dialog, None
+        if p.phase is ExportPhase.DONE:
+            w, h = p.frame_size
+            dlg.mark_finished(
+                f"Done: {p.frames_done} frames, {w}x{h}, codec {p.codec_used}\n"
+                f"{p.output_path}"
+            )
+        elif p.phase is ExportPhase.ABORTED:
+            dlg.mark_finished("Cancelled; the partial file was removed.")
+        else:
+            dlg.mark_finished(p.error or "Export failed.")
+
     def shutdown(self) -> None:
         self._poll.stop()
+        self._export_timer.stop()
+        # Abort before joining: the encoder loop only checks the flag between
+        # frames, so a running export would otherwise hold the app open.
+        self._exporter.abort()
+        self._exporter.join(10.0)
         self._proc.stop()
         if isinstance(self._reader, VideoFileWorker):
             # stop() only rewinds; shutdown() is what ends the decode thread.
             self._reader.shutdown()
         else:
             self._reader._stop = True
-        self._reader.wait(5000)
+            self._reader.wait(5000)
         self._proc.wait(5000)

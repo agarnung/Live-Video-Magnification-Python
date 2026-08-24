@@ -21,9 +21,11 @@ from instrumentation import Instrumentation
 from mat_to_qimage import mat_to_qimage
 from magnificator import Magnificator
 from structures import (
+    DisplayFrame,
     ImageProcessingFlags,
     ImageProcessingSettings,
     ThreadStatisticsData,
+    ViewMode,
 )
 
 
@@ -176,8 +178,9 @@ class CaptureWorker(QThread):
 
 
 class ProcessingWorker(QThread):
-    """Magnifies frames from the queue and emits QImages."""
+    """Magnifies queued frames and publishes {processed, original} pairs."""
 
+    # One signal carrying ONE DisplayFrame, never two signals: see DisplayFrame.
     new_frame = pyqtSignal(object)
     stats = pyqtSignal(object)
     max_levels = pyqtSignal(int)
@@ -211,6 +214,11 @@ class ProcessingWorker(QThread):
         # thread.  That keeps the algorithm modules untouched.
         self._flags = ImageProcessingFlags()
         self._settings = ImageProcessingSettings()
+        self._roi = (0, 0, 0, 0)
+        # Views that never show the original pane do not need the extra QImage
+        # conversion; ORIGINAL additionally bypasses magnification altogether.
+        self._view_mode = ViewMode.PROCESSED
+        self._need_max_levels_for_full = True
         self._processing_buffer: list[np.ndarray] = []
         self._buffer_len = 2
         self._magnificator = Magnificator(
@@ -264,6 +272,28 @@ class ProcessingWorker(QThread):
             return
         self._need_max_levels_for_full = True
         self._publish_invalidating(downscale=divisor)
+
+    def set_view_mode(self, mode: ViewMode) -> None:
+        """
+        Select which panes the display needs.
+
+        In ORIGINAL mode the magnification output is never shown, so the whole
+        pyramid is skipped -- that is the point of the bypass, it buys back the
+        CPU. The temporal state is dropped on the way in and out because the
+        filters would otherwise resume with a history full of frames they never
+        saw, producing a visible transient.
+        """
+        changed = mode is not self._view_mode
+        bypass_toggled = changed and (
+            mode is ViewMode.ORIGINAL or self._view_mode is ViewMode.ORIGINAL
+        )
+        # No mutex needed: this runs on the GUI thread, the loop runs on its
+        # own, and a plain attribute assignment is atomic under the GIL -- the
+        # same reasoning that lets _config be published without a lock.
+        self._view_mode = mode
+        if bypass_toggled:
+            self._processing_buffer.clear()
+            self._magnificator.clear_buffer()
 
     def update_flags(self, f: ImageProcessingFlags) -> None:
         """A mode switch always invalidates the filter history."""
@@ -348,7 +378,7 @@ class ProcessingWorker(QThread):
             self._sync_config(cfg)
 
             try:
-                out_disp = self._process_frame(frame, cfg)
+                out_disp, orig_disp = self._process_frame(frame, cfg)
             except Exception:
                 # A stage threw. Don't let it kill the QThread silently, which
                 # is what happened before: the tab simply stopped updating with
@@ -359,6 +389,7 @@ class ProcessingWorker(QThread):
                     self._instr.on_processing_error()
                 self._reset_temporal_state()
                 out_disp = self._to_display(frame)
+                orig_disp = out_disp
 
             dt_ms = int((time.perf_counter() - t0) * 1000)
             self._update_fps_stats(dt_ms)
@@ -366,7 +397,15 @@ class ProcessingWorker(QThread):
                 self._instr.on_processed()
                 self._instr.record_latency((time.perf_counter() - capture_ts) * 1000.0)
                 self._instr.set_queue_depth(self._queue.qsize())
-            self.new_frame.emit(mat_to_qimage(out_disp))
+            # Both panes leave the worker in the same object, so the display
+            # cannot pair a processed frame with a different original.
+            need_original = self._view_mode is not ViewMode.PROCESSED
+            self.new_frame.emit(
+                DisplayFrame(
+                    processed=mat_to_qimage(out_disp),
+                    original=mat_to_qimage(orig_disp) if (need_original and orig_disp is not None) else None,
+                )
+            )
 
             st = ThreadStatisticsData()
             st.n_frames_processed = 1
@@ -379,8 +418,19 @@ class ProcessingWorker(QThread):
         """Widen a single-channel result so mat_to_qimage always sees BGR."""
         return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if img.ndim == 2 else img
 
-    def _process_frame(self, frame: np.ndarray, cfg: ProcessorConfig) -> np.ndarray:
-        """Crop, downscale and magnify one frame. May raise; the caller degrades."""
+    def _process_frame(
+        self, frame: np.ndarray, cfg: ProcessorConfig
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Crop, downscale and magnify one frame. May raise; the caller degrades.
+
+        Returns ``(processed, original)``. The "original" tap is taken
+        post-ROI/downscale/grayscale but PRE-magnification -- the same
+        first-stage tap the C++ chain exposes -- so the comparison views show
+        what the algorithm actually saw, not the raw camera frame. It is taken
+        before the buffer is handed to the magnificator, which may modify its
+        entries in place.
+        """
         x, y, rw, rh = cfg.roi
         fh, fw = frame.shape[:2]
         emit_lv_full: int | None = None
@@ -410,28 +460,32 @@ class ProcessingWorker(QThread):
         if cfg.grayscale_on and cur.ndim == 3:
             cur = cv2.cvtColor(cur, cv2.COLOR_BGR2GRAY)
 
-        self._processing_buffer.append(cur)
+        original = self._to_display(cur.copy())
 
         out = cur
-        if len(self._processing_buffer) == self._buffer_len:
-            if cfg.color_magnify_on:
-                self._magnificator.color_magnify()
-                if self._magnificator.has_frame():
-                    out = self._magnificator.get_frame_last()
-            elif cfg.laplace_magnify_on:
-                self._magnificator.laplace_magnify()
-                if self._magnificator.has_frame():
-                    out = self._magnificator.get_frame_last()
-            elif cfg.riesz_magnify_on:
-                self._magnificator.riesz_magnify()
-                if self._magnificator.has_frame():
-                    out = self._magnificator.get_frame_last()
-            else:
-                self._processing_buffer.pop(0)
+        # ORIGINAL view bypasses magnification entirely: nothing downstream
+        # reads the pyramid result, so there is no reason to pay for it.
+        if self._view_mode is not ViewMode.ORIGINAL:
+            self._processing_buffer.append(cur)
+            if len(self._processing_buffer) == self._buffer_len:
+                if cfg.color_magnify_on:
+                    self._magnificator.color_magnify()
+                    if self._magnificator.has_frame():
+                        out = self._magnificator.get_frame_last()
+                elif cfg.laplace_magnify_on:
+                    self._magnificator.laplace_magnify()
+                    if self._magnificator.has_frame():
+                        out = self._magnificator.get_frame_last()
+                elif cfg.riesz_magnify_on:
+                    self._magnificator.riesz_magnify()
+                    if self._magnificator.has_frame():
+                        out = self._magnificator.get_frame_last()
+                else:
+                    self._processing_buffer.pop(0)
 
         if emit_lv_full is not None:
             self.max_levels.emit(emit_lv_full)
-        return self._to_display(out)
+        return self._to_display(out), original
 
     def _update_fps_stats(self, elapsed_ms: int) -> None:
         if elapsed_ms > 0:
@@ -448,3 +502,7 @@ class ProcessingWorker(QThread):
             self._publish(framerate=float(measured))
             self._proc_times.clear()
             self._sample_n = 0
+
+    def downscale(self) -> int:
+        """Current processing-resolution divisor, so an export can match the preview."""
+        return self._config.downscale

@@ -1,10 +1,12 @@
-"""Estructuras de datos compartidas (equivalente a Structures.h)."""
+"""Shared data structures (equivalent to Structures.h)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 from PyQt6.QtCore import QRect
+from PyQt6.QtGui import QImage
 
 
 @dataclass
@@ -24,7 +26,7 @@ class ImageProcessingSettings:
 
 @dataclass
 class ImageProcessingFlags:
-    """Modo de procesamiento activo."""
+    """Active processing mode."""
 
     grayscale_on: bool = False
     color_magnify_on: bool = False
@@ -48,3 +50,37 @@ class ThreadStatisticsData:
     average_fps: int = 0
     n_frames_processed: float = 0.0
     average_vid_processing_fps: float = 0.0
+
+
+class ViewMode(Enum):
+    """
+    How the viewer composes the {original, processed} pair it is handed.
+
+    Mirrors the C++ DisplayWidget::ViewMode. ORIGINAL additionally lets the
+    processing worker skip magnification entirely, since nobody looks at it.
+    """
+
+    PROCESSED = 0
+    ORIGINAL = 1
+    SIDE_BY_SIDE = 2
+    STACKED = 3
+
+
+@dataclass(frozen=True)
+class DisplayFrame:
+    """
+    Processed frame paired with its matching pre-magnification frame.
+
+    Published as ONE object rather than two signals: if the two travelled
+    separately, the side-by-side panes could latch frames from different
+    instants (the queues and the event loop give no ordering guarantee), and the
+    comparison would silently show a one-frame offset. Coupling them makes the
+    lockstep a property of the data, not of delivery timing.
+
+    `original` is the output of the FIRST pipeline stage -- after ROI crop and
+    downscale but BEFORE magnification -- so both panes share geometry and can
+    be blitted side by side without rescaling.
+    """
+
+    processed: QImage
+    original: QImage | None = None
