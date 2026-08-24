@@ -38,11 +38,20 @@ read side by side:
 | `spatial_filter.py` | `SpatialFilter.cpp` |
 | `workers.py` | `CaptureThread.cpp`, `ProcessingThread.cpp` |
 | `mat_to_qimage.py` | `MatToQImage.cpp` |
-| `ui/` | `MainWindow.cpp`, `CameraView.cpp`, `MagnifyOptions.cpp` … |
+| `camera_enumerator.py` | `CameraEnumerator_*.cpp` |
+| `playback.py`, `ui/timeline.py` | `PlaybackController.*`, `FileSource.cpp`, `ui/TimelineView.*` |
+| `exporter.py`, `ui/export_dialogs.py` | `export/Exporter.cpp`, `ui/Export*Dialog.cpp` |
+| `instrumentation.py` | `core/Instrumentation.*` |
+| `ui/theme.py` | `ui/Theme.*` |
+| `ui/status_strip.py` | `ui/StatusStrip.cpp`, `ui/StatusHealth.hpp` |
+| `ui/widgets.py` | `ui/RangeSlider.cpp`, `SegmentedControl.cpp`, `ToggleSwitch.cpp` |
+| `ui/frame_label.py` | `ui/DisplayWidget.*` (drawn with `QPainter`, not OpenGL) |
+| `ui/` (rest) | `MainWindow.cpp`, `CameraView.cpp`, `MagnifyOptions.cpp` … |
 
-Algorithms are unchanged from the original, which implements the methods of
-Wu *et al.* (Eulerian Video Magnification, SIGGRAPH 2012) and Wadhwa *et al.*
-(Riesz pyramids, ICCP 2014).
+Algorithms are unchanged from the original in structure, which implements the
+methods of Wu *et al.* (Eulerian Video Magnification, SIGGRAPH 2012) and
+Wadhwa *et al.* (Riesz pyramids, ICCP 2014). One numerical bug was found and
+fixed in the port itself — see *Divergences from upstream* below.
 
 ## Install and run
 
@@ -61,20 +70,33 @@ Requires Python 3.10 or newer. Dependencies: PyQt6, OpenCV, NumPy, SciPy.
 
 ## Usage
 
-1. **File → Open camera** (or open a video file).
+1. **File → Connect / Open…** — pick a camera from the list (populated by name,
+   not by guessing an index) or browse to a video file.
 2. Pick a magnification mode in the options panel: colour, motion (Laplacian)
    or phase-based (Riesz).
-3. Set the temporal band, the amplification factor and the number of pyramid
-   levels. Useful starting points:
+3. Set the temporal band (the range slider keeps low ≤ high), the
+   amplification factor and the number of pyramid levels. Useful starting
+   points:
 
 | Target | Band (Hz) | Amplification | Mode |
 |---|---|---|---|
 | Facial pulse (colour) | 0.8 – 1.5 | 50 – 150 | Colour |
+| Facial pulse (motion) | 0.8 – 2.0 | 10 – 40 | Motion / Riesz |
 | Small motion | 0.5 – 3.0 | 10 – 30 | Motion / Riesz |
 | Structural vibration | 5 – 15 | 5 – 20 | Riesz |
 
-A region of interest can be selected by dragging on the image, which cuts the
-cost considerably at high resolutions.
+A region of interest can be selected by dragging on the image; the segmented
+control next to it (Full, 1/2, 1/4, 1/8) cuts the processing resolution, which
+is the single most effective way to buy back frame rate.
+
+For a video file, a transport bar (play/pause/stop, loop, playback speed) and
+a timeline with draggable in/out trim handles appear below the image — a
+camera has neither, since a live source isn't seekable. The view selector next
+to it switches between the processed frame, the original (pre-magnification)
+frame, and side-by-side / stacked comparisons of the two, always in lockstep.
+**Export video…** re-processes the file from scratch with the current
+settings and writes MP4 (H.264), AVI (MJPG) or MKV (FFV1, lossless), with an
+optional trim range and side-by-side/stacked composition.
 
 ## Troubleshooting
 
@@ -103,8 +125,19 @@ affect the application. Silence them with
 `QT_QPA_PLATFORM=xcb python main.py`.
 
 **Low frame rate.** Reduce the number of pyramid levels, select a region of
-interest, or lower the capture resolution. Python carries an interpreter
-overhead the C++ original does not.
+interest, or lower the processing resolution (the segmented control next to
+the ROI). Python carries an interpreter overhead the C++ original does not.
+
+**Motion (Laplacian) or Phase (Riesz) barely shows any effect.** This was a
+real bug, fixed in this port: `cv2`'s float LAB conversion puts the L channel
+in `[0, 100]` while every other path in the pipeline works in `[0, 1]`, and
+the amplification formulas were calibrated for the latter. Left unfixed, the
+recovered motion signal was throttled by roughly two orders of magnitude
+before it reached the screen — measured on a facial-pulse clip, the
+frame-to-frame change introduced by magnification was 3/255, indistinguishable
+from noise. If you are on a checkout older than this fix, update; there is
+nothing to configure around it. Colour mode was never affected (it doesn't use
+LAB).
 
 ## Credits and licence
 
@@ -134,6 +167,19 @@ fixed. Where the port now differs deliberately, the reason is given.
 
 **Correctness**
 
+- **LAB scale mismatch in Motion and Phase modes.** `cv2`'s float LAB puts the
+  L channel in `[0, 100]` while a/b are roughly `[-127, 127]`; every
+  amplification constant in the pipeline (`curr_alpha`, `delta`, `lambda` in
+  `laplace_magnify`; the Riesz amplitude/phase machinery in `riesz_magnify`) is
+  calibrated for pixel values in `[0, 1]`, the scale the BGR and grayscale
+  paths actually use. Left unnormalised, the recovered motion signal was
+  throttled by roughly two orders of magnitude before it reached the output —
+  measured on a facial-pulse clip, magnification changed only 3/255 of the
+  frame, indistinguishable from noise. L is now normalised to `[0, 1]` before
+  the pyramid/Riesz stage and denormalised on every path back to
+  `COLOR_LAB2BGR`; the same clip now shows an 84/255 change that scales
+  monotonically with the amplification slider. Colour mode never converts to
+  LAB, so it was unaffected.
 - **Motion band is now in Hertz.** The mode inherited raw IIR blend
   coefficients as defaults (`20.0`, `40.0`), which are not valid coefficients at
   all — they must lie in `[0, 1)`. The filter computes `(1 - cutoff)`, so those
@@ -184,20 +230,45 @@ fixed. Where the port now differs deliberately, the reason is given.
   inf/NaN and patches some of them afterwards.
 - Grayscale phase magnification is implemented; upstream falls through.
 
+## Status
+
+All the upstream features originally listed here as TODO have been ported and
+are verified working end to end (`python main.py` starts clean; each feature
+below was exercised against real video, not just imported):
+
+- [x] Camera enumeration by name (`camera_enumerator.py`, `VIDIOC_QUERYCAP` on
+      Linux), instead of a bare index spinner. Falls back to blind probing on
+      other platforms — see TODO.
+- [x] Playback transport for files: play/pause/stop, frame-accurate seek
+      (exact against `CAP_PROP_POS_FRAMES` on the tested clips), in/out trim,
+      loop, manual speed (`playback.py`, `ui/timeline.py`).
+- [x] Comparison views: processed / original / side-by-side / stacked, always
+      in lockstep (`structures.DisplayFrame`, `ui/frame_label.py`).
+- [x] Export to MP4 (H.264 with a codec fallback cascade), AVI (MJPG) and MKV
+      (FFV1, lossless), with trim and split composition (`exporter.py`).
+- [x] Light/dark theme following the OS (`ui/theme.py`).
+- [x] Instrumentation: EMA frame rate, p95 latency, drop fraction, queue depth,
+      surfaced through a status strip that flags when the pipeline falls
+      behind (`instrumentation.py`, `ui/status_strip.py`).
+- [x] Settings published as an immutable snapshot instead of a mutex held
+      across the whole frame — dragging a slider no longer stalls the GUI.
+- [x] Per-stage exception isolation: an exception in the magnifier is counted,
+      the temporal state is reset, and the input frame is shown degraded
+      instead of the worker thread dying silently.
+- [x] Custom widgets ported from the reference UI: a two-handle range slider
+      for the frequency band, a segmented control for the processing
+      resolution, an animated toggle switch (`ui/widgets.py`).
+- [x] F11/Escape fullscreen toggle.
+
 ## TODO
 
-Upstream features not yet ported, roughly by value over effort:
+What is left, roughly by value over effort:
 
-- [ ] Camera enumeration by name (`/dev/video*` via `VIDIOC_QUERYCAP`), so the
-      device list shows real cameras instead of a bare index spinner.
-- [ ] Playback transport for files: play/pause/stop, frame-accurate seek,
-      in/out trim, loop, manual speed — with a timeline widget.
-- [ ] Comparison views: processed / original / side-by-side / stacked.
-- [ ] Export to MP4 (H.264), AVI (MJPG) and MKV (FFV1), with trim and split.
-- [ ] Light/dark theme following the OS.
-- [ ] Real instrumentation: EMA frame rate, p95 latency, drop fraction, queue
-      depth — plus a status strip that flags when the pipeline falls behind.
-- [ ] Publish settings as an immutable snapshot instead of holding a mutex
-      across the whole frame, which stalls the GUI while dragging a slider.
-- [ ] Per-stage exception isolation: an exception in the magnifier currently
-      kills the worker thread silently.
+- [ ] Camera enumeration on Windows (Media Foundation) and macOS
+      (AVFoundation); only Linux uses the real device list today, other
+      platforms fall back to blind index probing.
+- [ ] Camera recording to a lossless buffer with a memory cap — export
+      currently only re-processes an existing file, not a live camera.
+- [ ] `DisplayWidget`'s OpenGL rendering was deliberately not ported; the
+      comparison views use `QPainter` instead, which is simpler and was judged
+      good enough — revisit only if profiling shows it isn't.
