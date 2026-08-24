@@ -192,6 +192,16 @@ class Magnificator:
             if not gray_mode:
                 f = inp.astype(np.float32) / 255.0
                 f = cv2.cvtColor(f, cv2.COLOR_BGR2LAB)
+                # cv2's float LAB puts L in [0, 100] and a/b roughly in
+                # [-127, 127], while every amplification constant here
+                # (curr_alpha, delta, lambda) is tuned assuming pixel values in
+                # [0, 1] -- the same scale the BGR and grayscale paths use.
+                # Left as-is, a motion term of magnitude ~1-4 is a 1-4% change
+                # on L's 0-100 scale but was calibrated to read as a 100-400%
+                # change on a 0-1 scale, so the visible effect was throttled by
+                # roughly two orders of magnitude. Normalising L to [0, 1] here
+                # (and undoing it below) restores the intended amplitude.
+                f[..., 0] /= 100.0
             else:
                 f = inp.astype(np.float32) / 255.0
                 if f.ndim == 2:
@@ -250,6 +260,9 @@ class Magnificator:
                 out = f32
 
             if not gray_mode:
+                # Undo the /100 normalisation applied to L on the way in, so
+                # cv2 sees the [0, 100] scale it expects for LAB->BGR.
+                out[..., 0] *= 100.0
                 out = cv2.cvtColor(out, cv2.COLOR_LAB2BGR)
                 out = (out * 255.0).clip(0, 255).astype(np.uint8)
             else:
@@ -279,6 +292,12 @@ class Magnificator:
                     buffer_in.astype(np.float32) / 255.0, cv2.COLOR_BGR2LAB
                 )
                 l_ch, a_ch, b_ch = cv2.split(lab)
+                # See the matching comment in laplace_magnify: cv2's L channel
+                # is [0, 100], but the Riesz amplitude/phase machinery and its
+                # temporal filters are calibrated for pixel values in [0, 1].
+                # Left unnormalised, the recovered motion signal is throttled
+                # by two orders of magnitude before it ever reaches amplitude.
+                l_ch = l_ch / 100.0
                 input_l = l_ch
                 channels_lab = (l_ch, a_ch, b_ch)
             elif p_channels > 1:
@@ -353,7 +372,10 @@ class Magnificator:
                     magnified = input_l
 
                 if channels_lab is not None:
-                    l_out = magnified
+                    # Undo the /100 normalisation applied when input_l was
+                    # built, so L is back on cv2's [0, 100] scale to match a/b
+                    # before the LAB->BGR conversion.
+                    l_out = magnified * 100.0
                     merged = cv2.merge(
                         (
                             l_out,
