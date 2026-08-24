@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import queue
 
-from PyQt6.QtCore import QThread, QRect, Qt
+from PyQt6.QtCore import QThread, QRect, Qt, QTimer
 from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -17,9 +17,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from instrumentation import Instrumentation
 from playback import VideoFileWorker
 from ui.frame_label import FrameLabel
 from ui.magnify_options import MagnifyOptions
+from ui.status_strip import StatusStrip
 from ui.timeline import TimelineView
 from workers import CaptureWorker, ProcessingWorker
 
@@ -39,8 +41,14 @@ class CameraTab(QWidget):
     def __init__(self, use_camera: bool, **kwargs) -> None:
         super().__init__()
         qsize = int(kwargs.get("queue_size", 8))
+        self._is_camera = use_camera
+        self._target_fps = 0.0
+        # The file reader re-emits its nominal rate every frame; the spinbox is
+        # primed once so a user override is not overwritten on the next emit.
+        self._playback_primed = False
         self._queue: queue.Queue = queue.Queue(maxsize=qsize)
-        self._proc = ProcessingWorker(self._queue)
+        self._instr = Instrumentation()
+        self._proc = ProcessingWorker(self._queue, self._instr)
         self._is_file = not use_camera
         # Playback was running when the current scrub began, so it must resume
         # on release. Captured before pausing, since pausing destroys the answer.
@@ -55,19 +63,20 @@ class CameraTab(QWidget):
                 bool(kwargs.get("drop", False)),
                 self._queue,
                 qsize,
+                self._instr,
             )
         else:
             self._reader = VideoFileWorker(
                 str(kwargs["path"]),
                 self._queue,
                 bool(kwargs.get("drop", False)),
+                self._instr,
             )
 
         split = QSplitter(Qt.Orientation.Horizontal)
         left = QVBoxLayout()
         self._label = FrameLabel()
         self._label.setText("Waiting for video\u2026")
-        self._fps_lbl = QLabel("FPS: \u2014")
         left_w = QWidget()
         left_w.setLayout(left)
         left.addWidget(self._label)
@@ -79,7 +88,6 @@ class CameraTab(QWidget):
             self._transport = self._build_transport()
             left.addWidget(self._timeline)
             left.addWidget(self._transport)
-        left.addWidget(self._fps_lbl)
 
         self._opts = MagnifyOptions()
         split.addWidget(left_w)
@@ -87,8 +95,21 @@ class CameraTab(QWidget):
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 1)
 
+        self._strip = StatusStrip()
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(split)
+        outer.addWidget(self._strip)
+        if not use_camera:
+            self._strip.playback_fps_changed.connect(self._on_playback_fps)
+
+        # The strip is refreshed by polling, never by a per-frame signal: at
+        # 60 fps a signal per frame would queue 60 GUI repaints a second just
+        # to redraw text that only changes perceptibly a few times a second.
+        self._poll = QTimer(self)
+        self._poll.setInterval(500)
+        self._poll.timeout.connect(self._refresh_stats)
+        self._poll.start()
 
         self._proc.new_frame.connect(self._on_frame)
         self._proc.stats.connect(self._on_stats)
@@ -98,9 +119,10 @@ class CameraTab(QWidget):
         self._opts.downscale_changed.connect(self._proc.set_downscale)
         self._label.roi_changed.connect(self._on_roi)
         self._reader.capture_fps.connect(self._proc.update_framerate)
-        # Keep the Nyquist clamp of the cutoff sliders in step with the
-        # rate the source actually delivers.
+        # Keep the Nyquist clamp of the cutoff sliders in step with the rate the
+        # source actually delivers.
         self._reader.capture_fps.connect(self._opts.set_capture_fps)
+        self._reader.capture_fps.connect(self._on_capture_fps)
 
         if self._is_file:
             self._connect_transport()
@@ -211,11 +233,30 @@ class CameraTab(QWidget):
 
     def _on_frame(self, img: QImage) -> None:
         self._label.set_image(img)
+        self._instr.on_displayed()
 
     def _on_stats(self, st) -> None:
-        self._fps_lbl.setText(f"Processing ~{getattr(st, 'average_fps', 0)} FPS")
+        """Kept for compatibility; the visible readout comes from the poll."""
+
+    def _on_capture_fps(self, fps: float) -> None:
+        """Remember the source's nominal rate, the health denominator."""
+        if fps > 0.0:
+            self._target_fps = float(fps)
+            if not self._is_camera and not self._playback_primed:
+                self._playback_primed = True
+                self._strip.set_playback_fps(fps)
+
+    def _on_playback_fps(self, fps: float) -> None:
+        if isinstance(self._reader, VideoFileWorker):
+            self._reader.set_playback_fps(fps)
+
+    def _refresh_stats(self) -> None:
+        self._strip.set_stats(
+            self._instr.snapshot(), self._target_fps, True, self._is_camera
+        )
 
     def shutdown(self) -> None:
+        self._poll.stop()
         self._proc.stop()
         if isinstance(self._reader, VideoFileWorker):
             # stop() only rewinds; shutdown() is what ends the decode thread.

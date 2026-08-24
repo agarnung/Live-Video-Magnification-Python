@@ -24,6 +24,11 @@ import time
 from typing import Optional
 
 import cv2
+
+try:  # Optional dependency: the transport works without metrics.
+    from instrumentation import Instrumentation
+except ImportError:  # pragma: no cover
+    Instrumentation = None  # type: ignore[assignment]
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from structures import ThreadStatisticsData
@@ -61,11 +66,18 @@ class VideoFileWorker(QThread):
         path: str,
         frame_queue: "queue.Queue",
         drop_if_full: bool,
+        instrumentation: "Instrumentation | None" = None,
     ) -> None:
         super().__init__()
         self._path = path
         self._queue = frame_queue
         self._drop = drop_if_full
+        # Optional: shared with the processing worker so the status strip can
+        # tell "the file is pacing correctly" from "we are shedding frames".
+        self._instr = instrumentation
+        # Frames shed because the consumer could not keep up. Should stay at 0
+        # for a paced file; a rising count means the pipeline is the bottleneck.
+        self._drops = 0
         self._stop = False
 
         # Pause gate. Set == running; cleared == paused. A file starts parked so
@@ -239,6 +251,9 @@ class VideoFileWorker(QThread):
         if self._drop and self._queue.full():
             try:
                 self._queue.get_nowait()
+                self._drops += 1
+                if self._instr is not None:
+                    self._instr.set_source_drops(self._drops)
             except queue.Empty:
                 pass
         if paced:
@@ -247,8 +262,14 @@ class VideoFileWorker(QThread):
             self._pace()
         try:
             self._queue.put(frame, timeout=0.5)
+            if self._instr is not None:
+                self._instr.on_captured()
         except queue.Full:
-            pass
+            # The consumer never drained in time; count it rather than losing
+            # the fact silently.
+            self._drops += 1
+            if self._instr is not None:
+                self._instr.set_source_drops(self._drops)
         self.position_changed.emit(emitted)
 
     def run(self) -> None:
